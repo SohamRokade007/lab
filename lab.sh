@@ -27,6 +27,7 @@ OPT_INSTALL=0
 OPT_YES=0
 OPT_NO_PAUSE=0
 OPT_CLEANUP=0
+OPT_CHILD=0
 SUDO=""
 ACTIVE_NS=()
 
@@ -71,6 +72,7 @@ Usage: ./lab.sh [options]
   --yes, -y       Automatically confirm installation and safe local actions
   --no-pause      Do not pause between labs
   --cleanup       Stop lab containers/namespaces and remove generated artifacts
+  --child         Internal: run a lab inside its own terminal window
   --help          Show this help
 
 Safety: targets are localhost by default. Lab 1 accepts only a private lab IP
@@ -101,6 +103,7 @@ while (($#)); do
     --yes|-y) OPT_YES=1 ;;
     --no-pause) OPT_NO_PAUSE=1 ;;
     --cleanup) OPT_CLEANUP=1 ;;
+    --child) OPT_CHILD=1 ;;
     --list|-l) list_labs; exit 0 ;;
     --help|-h) usage; exit 0 ;;
     *) err "Unknown option: $1"; usage; exit 2 ;;
@@ -490,6 +493,38 @@ valid_selection() {
   return 0
 }
 
+launch_lab_terminal() {
+  local lab="$1" script_path command_line
+  script_path="$(readlink -f "${BASH_SOURCE[0]}")"
+  printf -v command_line 'bash --noprofile --norc %q --child --labs %q; echo; read -r -p "Lab finished. Press Enter to close this window..." _' "$script_path" "$lab"
+
+  if have x-terminal-emulator; then
+    x-terminal-emulator -T "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
+  elif have xfce4-terminal; then
+    xfce4-terminal --title="ACF Lab $lab" --command="bash --noprofile --norc -c $(printf '%q' "$command_line")" >/dev/null 2>&1 &
+  elif have gnome-terminal; then
+    gnome-terminal --title="ACF Lab $lab" -- bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
+  elif have konsole; then
+    konsole --title "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
+  elif have xterm; then
+    xterm -T "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
+  else
+    err "No supported terminal emulator found. Install xfce4-terminal or xterm."
+    return 1
+  fi
+  ok "Opened a new terminal for Lab $lab."
+}
+
+launch_selected_labs() {
+  local lab
+  IFS=',' read -ra selected <<< "$OPT_LABS"
+  for lab in "${selected[@]}"; do
+    launch_lab_terminal "$lab" || return 1
+    sleep 0.3
+  done
+  say "Each selected lab is running in its own terminal window."
+}
+
 menu() {
   while true; do
     say "\n${BOLD}${CYAN}APPLIED CYBERSECURITY FUNDAMENTALS — LAB RUNNER v$VERSION${RESET}"
@@ -518,6 +553,10 @@ main() {
   if [[ -z "$OPT_LABS" ]]; then menu || { info "Exiting."; return 0; }; fi
   if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
   if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; exit 2; fi
+  if (( ! OPT_CHILD )); then
+    launch_selected_labs
+    return 0
+  fi
   IFS=',' read -ra selected <<< "$OPT_LABS"
   for lab in "${selected[@]}"; do run_lab "$lab"; done
   say "\n${GREEN}Selected practicals finished.${RESET}"
