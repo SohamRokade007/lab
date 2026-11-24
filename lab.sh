@@ -38,7 +38,10 @@ warn() { say "${YELLOW}[!]${RESET} $*"; }
 err() { say "${RED}[x]${RESET} $*"; }
 
 run() {
-  printf '\n%s$ %s%s\n' "$CYAN" "$*" "$RESET" | tee -a "$SESSION_LOG"
+  local display
+  printf -v display '%q ' "$@"
+  display="${display% }"
+  printf '\n%s$ %s%s\n' "$CYAN" "$display" "$RESET" | tee -a "$SESSION_LOG"
   "$@" 2>&1 | tee -a "$SESSION_LOG"
   local rc=${PIPESTATUS[0]}
   if (( rc != 0 )); then warn "Command returned exit code $rc: $*"; fi
@@ -546,12 +549,16 @@ menu() {
 }
 
 main() {
-  say "${BOLD}ACF Lab Runner v$VERSION${RESET}"
-  say "Artifacts: $BASE_DIR"
-  say "Session log: $SESSION_LOG"
+  if (( ! OPT_CHILD )); then
+    say "${BOLD}ACF Lab Runner v$VERSION${RESET}"
+    say "Artifacts: $BASE_DIR"
+    say "Session log: $SESSION_LOG"
+  fi
   if (( OPT_CLEANUP )); then need_root; cleanup_all; return 0; fi
   if (( OPT_CHECK )); then check_tools; return 0; fi
-  check_tools
+  # The main/menu window performs the full preflight once. Child lab windows
+  # start directly at the practical instead of repeating the tool inventory.
+  if (( ! OPT_CHILD )); then check_tools; fi
   if (( OPT_INSTALL )); then install_tools; fi
   if (( ! OPT_CHILD )); then
     # Keep the original/menu terminal alive. Each selected lab is launched
