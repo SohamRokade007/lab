@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 BASE_DIR="${ACF_LAB_DIR:-$HOME/acf_lab_artifacts}"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -50,7 +50,7 @@ run() {
 
 pause() {
   (( OPT_NO_PAUSE )) && return 0
-  if [[ -t 0 ]]; then read -r -p "Press Enter to continue... " _ || true; fi
+  if [[ -t 0 ]]; then read -r -p "Press Enter to finish... " _ || true; fi
 }
 
 confirm() {
@@ -66,16 +66,14 @@ usage() {
   cat <<'HELP'
 ACF Cybersecurity Lab Runner
 Usage: ./lab.sh [options]
-  (no arguments)  Check tools and open the interactive menu
-  --labs 1,2,4    Run selected labs
-  --labs all      Run Labs 1,2,3,4,5,6,7,8,10 in order
+  (no arguments)  Show lab list, then run one selected lab in this terminal
+  --labs 4        Run one selected lab in this terminal
   --list          List included practicals
   --check         Check required tools only; do not install
   --install       Offer to install missing Kali/Debian packages
   --yes, -y       Automatically confirm installation and safe local actions
-  --no-pause      Do not pause between labs
+  --no-pause      Do not pause at the end of the practical
   --cleanup       Stop lab containers/namespaces and remove generated artifacts
-  --child         Internal: run a lab inside its own terminal window
   --help          Show this help
 
 Safety: targets are localhost by default. Lab 1 accepts only a private lab IP
@@ -587,38 +585,31 @@ menu() {
 }
 
 main() {
-  if (( ! OPT_CHILD )); then
-    say "${BOLD}ACF Lab Runner v$VERSION${RESET}"
-    say "Artifacts: $BASE_DIR"
-    say "Session log: $SESSION_LOG"
-  fi
-  if (( OPT_CLEANUP )); then need_root; cleanup_all; return 0; fi
+  if (( OPT_CLEANUP )); then cleanup_all; return 0; fi
   if (( OPT_CHECK )); then check_tools; return 0; fi
-  # The main/menu window performs the full preflight once. Child lab windows
-  # start directly at the practical instead of repeating the tool inventory.
-  if (( ! OPT_CHILD )); then check_tools; fi
   if (( OPT_INSTALL )); then install_tools; fi
-  if (( ! OPT_CHILD )); then
-    # Keep the original/menu terminal alive. Each selected lab is launched
-    # in a separate child terminal; after launching, return to the menu.
-    while true; do
-      if [[ -z "$OPT_LABS" ]]; then menu || { info "Exiting. Main terminal remains open."; return 0; }; fi
-      if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
-      if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; OPT_LABS=""; continue; fi
-      launch_selected_labs || warn "One or more lab windows could not be opened."
-      OPT_LABS=""
-    done
+
+  # Select exactly one lab per invocation. The practical runs in this same
+  # terminal; clear the selection/preflight screen before showing the lab.
+  if [[ -z "$OPT_LABS" ]]; then
+    list_labs
+    local selection
+    read -r -p "Select one lab to execute: " selection || return 1
+    selection="${selection//[[:space:]]/}"
+    if [[ "$selection" == "all" || "$selection" == *,* ]]; then
+      err "Run one lab per invocation. Select a single lab number."
+      return 2
+    fi
+    OPT_LABS="$selection"
   fi
-  if [[ -z "$OPT_LABS" ]]; then err "Internal child launch missing lab selection."; return 2; fi
-  if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
-  if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; return 2; fi
-  IFS=',' read -ra selected <<< "$OPT_LABS"
-  for lab in "${selected[@]}"; do run_lab "$lab"; done
-  say "\n${GREEN}Selected practicals finished.${RESET}"
-  say "Artifacts: $BASE_DIR"
-  say "Session log: $SESSION_LOG"
-  say "To stop the Juice Shop container: sudo docker stop acf-juice-shop"
-  say "To remove generated artifacts and runner resources: ./lab.sh --cleanup"
+
+  if ! valid_selection "$OPT_LABS"; then
+    err "Invalid lab selection. Choose 1, 2, 3, 4, 5, 6, 7, 8 or 10."
+    return 2
+  fi
+
+  if [[ -t 1 ]]; then clear; else printf '\n\n'; fi
+  run_lab "$OPT_LABS"
 }
 
 main "$@"
