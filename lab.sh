@@ -280,27 +280,65 @@ lab4() {
   local d="$BASE_DIR/lab4"
   make_lab_dir 4
   say "\n${BOLD}LAB 4 — Safe Malware / Simulated Malicious Program Analysis${RESET}"
-  cat > "$d/safe_simulation.py" <<'PY'
-from pathlib import Path
-import subprocess
 
-work = Path(__file__).resolve().parent / "sandbox_output"
-work.mkdir(exist_ok=True)
-marker = work / "simulated_dropped_file.txt"
-marker.write_text("This is a harmless malware-analysis simulation. No persistence or network activity.\n")
-print(f"[SIMULATION] Created test artifact: {marker}")
-result = subprocess.run(["/usr/bin/id"], capture_output=True, text=True, check=False)
-(work / "process_output.txt").write_text(result.stdout)
-print("[SIMULATION] Started a harmless child process: /usr/bin/id")
-print("[SIMULATION] Network beacon, persistence, credential access and destructive actions are intentionally disabled.")
+  # These are the two Python files supplied for Lab 4.
+  # Run from the lab directory because malware_sim.py creates test.txt there.
+  cat > "$d/malware_sim.py" <<'PY'
+import os
+
+# Make a dummy file
+open("test.txt", "w").write("demo")
+
+# Rename it (fake malware action)
+os.rename("test.txt", "test.locked")
+print("File renamed to test.locked")
+
+# Restore it
+os.rename("test.locked", "test.txt")
+print("File restored to test.txt")
 PY
-  run file "$d/safe_simulation.py"
-  run sha256sum "$d/safe_simulation.py"
-  run strings "$d/safe_simulation.py"
-  if have strace; then run strace -f -e trace=openat,execve -o "$d/strace.log" python3 "$d/safe_simulation.py"; else run python3 "$d/safe_simulation.py"; fi
-  run find "$d/sandbox_output" -maxdepth 1 -type f -printf '%f %s bytes\n'
-  run sha256sum "$d/sandbox_output"/*
-  ok "Lab 4 complete. Harmless artifacts and trace saved in $d"
+
+  cat > "$d/launcher.py" <<'PY'
+import os
+import sys
+
+print("Starting malware simulation...")
+os.system(f'"{sys.executable}" malware_sim.py')
+print("Simulation finished.")
+PY
+
+  say "Step 1 — Identify the supplied Python files"
+  run file "$d/launcher.py" "$d/malware_sim.py"
+
+  say "\nStep 2 — Calculate SHA-256 hashes before execution"
+  run sha256sum "$d/launcher.py" "$d/malware_sim.py"
+
+  say "\nStep 3 — Review the simulation source"
+  run sed -n '1,120p' "$d/launcher.py"
+  run sed -n '1,120p' "$d/malware_sim.py"
+
+  say "\nStep 4 — Execute the launcher (which starts malware_sim.py)"
+  (
+    cd "$d"
+    if have strace; then
+      strace -f -e trace=openat,execve -o "$d/strace.log" python3 launcher.py
+    else
+      python3 launcher.py
+    fi
+  )
+
+  say "\nStep 5 — Verify the file operation and restoration"
+  if [[ -f "$d/test.txt" && ! -e "$d/test.locked" ]]; then
+    ok "Test file was created, renamed to test.locked, then restored to test.txt."
+  else
+    warn "Expected restored test.txt was not found; inspect the execution output."
+  fi
+  run ls -l "$d/test.txt" 2>/dev/null || true
+  run sha256sum "$d/test.txt" 2>/dev/null || true
+  if [[ -f "$d/strace.log" ]]; then
+    say "System-call trace saved at: $d/strace.log"
+  fi
+  ok "Lab 4 complete. Python files and evidence saved in $d"
 }
 
 lab5() {
