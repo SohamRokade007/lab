@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 BASE_DIR="${ACF_LAB_DIR:-$HOME/acf_lab_artifacts}"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
@@ -496,11 +496,12 @@ valid_selection() {
 launch_lab_terminal() {
   local lab="$1" script_path command_line
   script_path="$(readlink -f "${BASH_SOURCE[0]}")"
-  printf -v command_line 'bash --noprofile --norc %q --child --labs %q; echo; read -r -p "Lab finished. Press Enter to close this window..." _' "$script_path" "$lab"
 
-  if have x-terminal-emulator; then
-    x-terminal-emulator -T "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
-  elif have xfce4-terminal; then
+  # Run the same script in child mode. The terminal displays the lab's real
+  # headings, commands and command output, without an interactive shell prompt.
+  printf -v command_line 'printf "\\033[1;36mAPPLIED CYBERSECURITY FUNDAMENTALS — LAB %s\\033[0m\\n\\n"; bash --noprofile --norc %q --child --labs %q; rc=$?; printf "\\nLab process finished (exit code %s).\\n" "$rc"; read -r -p "Press Enter to close this lab window... " _' "$lab" "$script_path" "$lab"
+
+  if have xfce4-terminal; then
     xfce4-terminal --title="ACF Lab $lab" --command="bash --noprofile --norc -c $(printf '%q' "$command_line")" >/dev/null 2>&1 &
   elif have gnome-terminal; then
     gnome-terminal --title="ACF Lab $lab" -- bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
@@ -508,11 +509,13 @@ launch_lab_terminal() {
     konsole --title "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
   elif have xterm; then
     xterm -T "ACF Lab $lab" -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
+  elif have x-terminal-emulator; then
+    x-terminal-emulator -e bash --noprofile --norc -c "$command_line" >/dev/null 2>&1 &
   else
     err "No supported terminal emulator found. Install xfce4-terminal or xterm."
     return 1
   fi
-  ok "Opened a new terminal for Lab $lab."
+  ok "Opened a separate terminal window for Lab $lab."
 }
 
 launch_selected_labs() {
@@ -550,13 +553,20 @@ main() {
   if (( OPT_CHECK )); then check_tools; return 0; fi
   check_tools
   if (( OPT_INSTALL )); then install_tools; fi
-  if [[ -z "$OPT_LABS" ]]; then menu || { info "Exiting."; return 0; }; fi
-  if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
-  if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; exit 2; fi
   if (( ! OPT_CHILD )); then
-    launch_selected_labs
-    return 0
+    # Keep the original/menu terminal alive. Each selected lab is launched
+    # in a separate child terminal; after launching, return to the menu.
+    while true; do
+      if [[ -z "$OPT_LABS" ]]; then menu || { info "Exiting. Main terminal remains open."; return 0; }; fi
+      if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
+      if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; OPT_LABS=""; continue; fi
+      launch_selected_labs || warn "One or more lab windows could not be opened."
+      OPT_LABS=""
+    done
   fi
+  if [[ -z "$OPT_LABS" ]]; then err "Internal child launch missing lab selection."; return 2; fi
+  if [[ "$OPT_LABS" == "all" ]]; then OPT_LABS="1,2,3,4,5,6,7,8,10"; fi
+  if ! valid_selection "$OPT_LABS"; then err "Invalid lab selection: $OPT_LABS"; return 2; fi
   IFS=',' read -ra selected <<< "$OPT_LABS"
   for lab in "${selected[@]}"; do run_lab "$lab"; done
   say "\n${GREEN}Selected practicals finished.${RESET}"
